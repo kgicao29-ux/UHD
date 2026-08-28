@@ -31,23 +31,26 @@ import java.net.URLDecoder
 /**
  * CloudStream provider for UHDMovies (https://uhdmovies.autos).
  *
- * WordPress (gridlove theme) download index. Everything needed lives in plain
- * HTML; the interesting part is the download chain (verified live):
+ * Catalog: WordPress (gridlove) — lists, search and post pages are plain HTML.
  *
- *   1. post buttons are <a class="maxbutton …" href="cloud.unblockedgames.world/?sid=<b64>">
- *   2. GET  sid url        -> <form id="landing"> with _wp_http
- *      POST _wp_http       -> page with another landing form (_wp_http2)
- *      POST _wp_http2      -> page whose script calls
- *                             s_NNN('<cookieName>', '<cookieValue>', 60)
- *      GET  ?go=<cookieName> with cookie <cookieName>=<cookieValue>
- *                           -> meta refresh -> driveseed.org/r?key=…&id=…
- *   3. GET /r?…            -> window.location.replace("/file/<KEY>")
- *      GET /file/<KEY>     -> file page:
- *                             a.btn-danger  = Instant Download
- *                                 -> cdn.video-gen.xyz/<hex>::<sig>
- *                                 -> 302 video-seed.dev/?url=<googleusercontent direct>
- *                             a.btn-warning = Resume Cloud (/zfile/<KEY>)
- *                                 -> page with a workers.dev direct .mkv link
+ * Stream resolution is a faithful port of the flows used by phisher98's
+ * UHDmoviesProvider v38 (decompiled reference), each step verified live:
+ *
+ *   post buttons (a[class*=maxbutton]) → cloud.unblockedgames.world/?sid=<b64>
+ *     GET sid → <form id="landing"> (POST all inputs)
+ *     POST  → second hidden landing form (POST again, incl. _wp_http2)
+ *     POST  → page whose script carries "?go=<token>"
+ *     GET /?go=<token>  with cookie {<token>: _wp_http2}   (bypassHrefli)
+ *            → meta refresh → driveseed.org/r?…
+ *     GET   → window.location.replace("/file/KEY") → driveseed.org/file/KEY
+ *
+ *   /file/KEY page:
+ *     a.btn-danger "Instant Download" → cdn.video-gen.xyz → redirects to
+ *        video-seed.dev/?url=<enc> → POST https://video-seed.xyz/api
+ *        {keys: …} with x-token → {url: <fresh direct GDrive>}
+ *        (fallback: URL-decode the ?url= param — also a direct GDrive file)
+ *     a.btn-warning "Resume Cloud" → /zfile/KEY → POST action=cloud →
+ *        {url: /zfile/KEY?token=…} → a.btn-success / workers.dev direct link
  */
 class UHDMoviesProvider : MainAPI() {
     override var mainUrl = "https://uhdmovies.autos"
@@ -59,7 +62,7 @@ class UHDMoviesProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val userAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
     private val cloudBase = "https://cloud.unblockedgames.world"
     private val driveseedBase = "https://driveseed.org"
@@ -77,18 +80,15 @@ class UHDMoviesProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Payload(val links: List<SidLink> = emptyList())
 
-    // ------------------------------------------------------------------ //
-    // Regexes / constants
-    // ------------------------------------------------------------------ //
-
     companion object {
         private val YEAR_REGEX = Regex("""\b(19|20)\d{2}\b""")
         private val SEASON_IN_TITLE = Regex("""\(?\bSeason\s?(\d{1,2})\)?""", RegexOption.IGNORE_CASE)
         private val EPISODE_REGEX = Regex("""S(\d{1,2})E(\d{1,3})""", RegexOption.IGNORE_CASE)
-        private val QUALITY_REGEX = Regex("""(2160|1440|1080|720|480)[pP]""")
-        private val PEPE_COOKIE_REGEX = Regex("""s_\d+\('([^']+)',\s*'([^']+)'""")
+        private val QUALITY_REGEX = Regex("""(\d{3,4})[pP]""")
+        private val GO_SCRIPT_REGEX = Regex("""\?go=([^"'\s\\]+)""")
+        private val REPLACE_PATH_REGEX = Regex("""window\.location\.replace\("([^"]+)"\)""")
         private val REFRESH_URL_REGEX = Regex("""url=(.+)""", RegexOption.IGNORE_CASE)
-        private val FILE_KEY_REGEX = Regex("""window\.location\.replace\("([^"]+)"\)""")
+        private val ZFILE_KEY_REGEX = Regex("""formData\.append\(\s*["']key["']\s*,\s*["']([^"']+)["']\s*\)""")
         private val QUERY_URL_REGEX = Regex("""[?&]url=([^&]+)""")
     }
 
@@ -119,11 +119,12 @@ class UHDMoviesProvider : MainAPI() {
     private fun parseTitle(raw: String): Pair<String, Int?> {
         var t = raw.trim().removePrefix("Download").trim()
         val year = YEAR_REGEX.find(t)?.value?.toIntOrNull()
-        val cut = listOf("Dual Audio", "Multi Audio", "Triple Audio", "Hindi Dubbed", "English Audio", "||", "{", "(", "2160p", "1080p", "720p", "4k", "Season")
-            .mapNotNull { marker ->
-                Regex(Regex.escape(marker), RegexOption.IGNORE_CASE).find(t)?.range?.first()
-            }
-            .minOrNull()
+        val cut = listOf(
+            "Dual Audio", "Multi Audio", "Triple Audio", "Hindi Dubbed", "English Audio",
+            "||", "{", "(", "2160p", "1080p", "720p", "4k", "Season",
+        ).mapNotNull { marker ->
+            Regex(Regex.escape(marker), RegexOption.IGNORE_CASE).find(t)?.range?.first()
+        }.minOrNull()
         if (cut != null && cut > 0) t = t.substring(0, cut).trim()
         t = t.trim(' ', '-', ':', '|')
         if (t.length < 2) t = raw.trim().removePrefix("Download").trim()
@@ -208,16 +209,14 @@ class UHDMoviesProvider : MainAPI() {
     // Detail
     // ------------------------------------------------------------------ //
 
-    /** Walks previous siblings/ancestors to find a label for a download button. */
+    /** Walks previous siblings to find a label for a download button. */
     private fun labelFor(el: Element): String {
         var node: Element? = el
         repeat(6) {
             node = node?.previousElementSibling() ?: return@repeat
             val txt = node!!.selectFirst("strong")?.text() ?: node!!.text()
             if (txt.isNotBlank()) return txt.trim().take(120)
-            node = node
         }
-        // fall back to the closest heading
         return el.parents().firstOrNull { it.tag().name.startsWith("h") }?.text()?.take(120)
             ?: el.attr("title").takeIf { it.isNotBlank() } ?: "Download"
     }
@@ -235,7 +234,6 @@ class UHDMoviesProvider : MainAPI() {
             ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { !it.contains("logo") }
         val tags = doc.select(".entry-category a").eachText().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
-        // All real download buttons on the page.
         val buttons = doc.select("a[class*=maxbutton]").mapNotNull { btn ->
             btn.sidHref()?.let { btn to it }
         }
@@ -266,7 +264,6 @@ class UHDMoviesProvider : MainAPI() {
                 val number = m.groupValues[2].toIntOrNull() ?: ++fallbackIndex
                 episodes += Ep(season, number, label, sid)
             } else {
-                // season packs / unlabelled buttons become extra numbered entries
                 episodes += Ep(seasonFromTitle ?: 1, ++fallbackIndex, label, sid)
             }
         }
@@ -292,7 +289,7 @@ class UHDMoviesProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------------ //
-    // Link resolution
+    // Link resolution (ported from phisher98's UHDmoviesProvider v38)
     // ------------------------------------------------------------------ //
 
     override suspend fun loadLinks(
@@ -308,127 +305,184 @@ class UHDMoviesProvider : MainAPI() {
         for (link in payload.links) {
             val sidUrl = link.sid ?: continue
             runCatching {
-                val driveSeedUrl = resolveCloud(sidUrl) ?: return@runCatching
-                emitDriveseed(driveSeedUrl, link.label, callback)
+                val fileUrl = bypassCloud(sidUrl) ?: return@runCatching
+                emitDriveseed(fileUrl, link.label, callback)
                 emitted = true
             }
         }
         return emitted
     }
 
+    private fun formInputs(form: Element): Map<String, String> =
+        form.select("input").associate { it.attr("name") to it.attr("value") }
+
     /**
-     * cloud.unblockedgames.wtf landing dance:
-     * GET sid -> POST _wp_http -> POST _wp_http2 -> cookie from s_NNN(...) ->
-     * GET ?go=<cookieName> -> meta refresh target (driveseed.org/r?…).
+     * cloud.unblockedgames.wtf landing dance (phisher98's bypassHrefli):
+     * GET sid → POST landing inputs → POST second landing inputs →
+     * script "?go=<token>" → GET /?go=<token> with cookie {token: _wp_http2} →
+     * meta refresh target → follow → window.location.replace path → file URL.
      */
-    private suspend fun resolveCloud(sidUrl: String): String? {
+    private suspend fun bypassCloud(sidUrl: String): String? {
         // 1. initial landing form
         val r1 = runCatching { app.get(sidUrl, headers = headers(mainUrl)) }.getOrNull() ?: return null
-        val d1 = Jsoup.parse(r1.text)
-        val form1 = d1.selectFirst("form#landing") ?: return null
+        val form1 = Jsoup.parse(r1.text).selectFirst("form#landing") ?: return null
         val action1 = form1.attr("abs:action").takeIf { it.startsWith("http") } ?: return null
-        val wp1 = form1.selectFirst("input[name=_wp_http]")?.attr("value")?.takeIf { it.isNotBlank() }
-            ?: form1.selectFirst("input")?.attr("value")?.takeIf { it.isNotBlank() }
-            ?: return null
+        val data1 = formInputs(form1).ifEmpty { return null }
 
-        // 2. first POST -> second landing form (hidden inside a blog page)
+        // 2. first POST -> second hidden landing form
         val r2 = runCatching {
-            app.post(action1, headers = headers(), data = mapOf("_wp_http" to wp1)).text
+            app.post(action1, headers = headers(sidUrl), data = data1).text
         }.getOrNull() ?: return null
-        val d2 = Jsoup.parse(r2)
-        val form2 = d2.selectFirst("form#landing") ?: return null
+        val form2 = Jsoup.parse(r2).selectFirst("form#landing") ?: return null
         val action2 = form2.attr("abs:action").takeIf { it.startsWith("http") } ?: return null
-        val wp2 = form2.selectFirst("input[name=_wp_http2]")?.attr("value")?.takeIf { it.isNotBlank() }
-            ?: return null
+        val data2 = formInputs(form2).ifEmpty { return null }
 
-        // 3. second POST -> script sets the pepe cookie
+        // 3. second POST -> script with ?go=<token>
         val r3 = runCatching {
-            app.post(action2, headers = headers(), data = mapOf("_wp_http2" to wp2)).text
+            app.post(action2, headers = headers(action1), data = data2).text
         }.getOrNull() ?: return null
-        val cookie = PEPE_COOKIE_REGEX.find(r3) ?: return null
-        val cookieName = cookie.groupValues[1]
-        val cookieValue = cookie.groupValues[2]
+        val goToken = GO_SCRIPT_REGEX.find(r3)?.groupValues?.get(1) ?: return null
+        val cookieValue = data2["_wp_http2"] ?: data2.values.lastOrNull() ?: return null
 
-        // 4. go url with the cookie -> meta refresh
+        // 4. GET /?go=<token> with the cookie -> meta refresh
         val r4 = runCatching {
             app.get(
-                "$cloudBase/?go=$cookieName",
-                headers = headers(action2) + ("Cookie" to "$cookieName=$cookieValue"),
+                "$cloudBase/?go=$goToken",
+                headers = headers(action2) + ("Cookie" to "$goToken=$cookieValue"),
             ).text
         }.getOrNull() ?: return null
-        val meta = Jsoup.parse(r4).selectFirst("meta[http-equiv=refresh]")?.attr("content") ?: return null
-        val target = REFRESH_URL_REGEX.find(meta)?.groupValues?.get(1)?.trim() ?: return null
-        return target.takeIf { it.startsWith("http") }
+        val refresh = Jsoup.parse(r4).selectFirst("meta[http-equiv=refresh]")?.attr("content") ?: return null
+        val target = REFRESH_URL_REGEX.find(refresh)?.groupValues?.get(1)?.trim() ?: return null
+        if (!target.startsWith("http")) return null
+
+        // 5. follow target (driveseed.org/r?…) -> window.location.replace("/file/KEY")
+        val r5 = runCatching { app.get(target, headers = headers(cloudBase)).text }.getOrNull() ?: return null
+        val replacePath = REPLACE_PATH_REGEX.find(r5)?.groupValues?.get(1) ?: return target
+        if (replacePath.contains("/404")) return null
+        val base = Regex("""^(https?://[^/]+)""").find(target)?.groupValues?.get(1) ?: return null
+        return if (replacePath.startsWith("http")) replacePath else base + replacePath
     }
 
-    /** driveseed.org/r?key=… -> /file/KEY page -> direct links. */
+    /** driveseed.org/file/KEY -> direct links. */
     private suspend fun emitDriveseed(
-        entryUrl: String,
+        fileUrl: String,
         label: String?,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val pageBody = runCatching {
-            app.get(entryUrl, headers = headers(mainUrl)).text
-        }.getOrNull() ?: return
-
-        // "/r?…" answers with window.location.replace("/file/KEY")
-        var fileUrl = entryUrl
-        FILE_KEY_REGEX.find(pageBody)?.groupValues?.get(1)?.let { path ->
-            fileUrl = if (path.startsWith("http")) path else "$driveseedBase$path"
-        }
-
-        val page = runCatching {
-            Jsoup.parse(app.get(fileUrl, headers = headers(driveseedBase)).text)
-        }.getOrNull() ?: return
-
-        val fileName = page.title().takeIf { it.isNotBlank() } ?: "UHDMovies"
-        val sizeText = page.select("li.list-group-item").eachText()
-            .firstOrNull { it.startsWith("Size") }?.substringAfter("Size :")?.trim()
-        val quality = qualityOf("$fileName $label")
-
-        fun shortName(): String = fileName.substringBeforeLast('.').take(70)
-
-        // Instant Download -> cdn.video-gen.xyz -> video-seed.dev?url=<googleusercontent>
-        page.selectFirst("a.btn-danger")?.attr("abs:href")?.takeIf { it.startsWith("http") }?.let { cdn ->
-            runCatching {
-                val res = app.get(cdn, headers = headers(driveseedBase))
-                val finalUrl = res.url.takeIf { it.startsWith("http") } ?: return@runCatching
-                val direct = QUERY_URL_REGEX.find(finalUrl)?.groupValues?.get(1)
-                    ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
-                    ?: finalUrl
-                callback(
-                    newExtractorLink(
-                        source = name,
-                        name = listOfNotNull("Instant", sizeText?.let { "($it)" }, label?.let { "• ${EPISODE_REGEX.replace(it, "").take(30)}" })
-                            .joinToString(" "),
-                        url = direct,
-                        type = ExtractorLinkType.VIDEO,
-                    ) {
-                        this.quality = quality
-                    }
-                )
+        val body = runCatching { app.get(fileUrl, headers = headers(driveseedBase)).text }.getOrNull() ?: return
+        var doc = Jsoup.parse(body)
+        // /r?… entries answer with a replace() to the real file page
+        if (doc.selectFirst("a.btn-danger") == null) {
+            REPLACE_PATH_REGEX.find(body)?.groupValues?.get(1)?.takeIf { it.startsWith("/") }?.let { path ->
+                runCatching {
+                    Jsoup.parse(app.get(driveseedBase + path, headers = headers(driveseedBase)).text)
+                }.getOrNull()?.let { doc = it }
             }
         }
 
-        // Resume Cloud -> /zfile/KEY -> workers.dev direct file
-        page.selectFirst("a.btn-warning")?.attr("abs:href")?.takeIf { it.startsWith("http") }?.let { zfile ->
+        val fileName = doc.selectFirst("li.list-group-item:contains(Name:)")?.text()
+            ?.substringAfter("Name :")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: doc.title().takeIf { it.isNotBlank() } ?: "UHDMovies"
+        val sizeText = doc.selectFirst("li.list-group-item:contains(Size:)")?.text()
+            ?.substringAfter("Size :")?.trim()
+        val quality = qualityOf("$fileName $label")
+
+        fun linkName(vararg parts: String?): String =
+            parts.filterNotNull().joinToString(" ").take(110)
+
+        // ---- Instant Download (a.btn-danger) ----
+        doc.selectFirst("a.btn-danger")?.attr("abs:href")?.takeIf { it.startsWith("http") }?.let { cdn ->
             runCatching {
-                val z = Jsoup.parse(app.get(zfile, headers = headers(driveseedBase)).text)
-                z.selectFirst("a[href*=workers.dev]")?.attr("abs:href")?.takeIf { it.startsWith("http") }
-                    ?.let { workerUrl ->
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = listOfNotNull("Resume Cloud", sizeText?.let { "($it)" })
-                                    .joinToString(" ") + " • ${shortName()}",
-                                url = workerUrl,
-                                type = ExtractorLinkType.VIDEO,
-                            ) {
-                                this.quality = quality
-                            }
-                        )
+                val res = app.get(cdn, headers = headers(driveseedBase))
+                val final = res.url.takeIf { it.startsWith("http") } ?: return@runCatching
+                val host = if (final.contains("video-leech")) "video-leech.xyz" else "video-seed.xyz"
+                val delim = "https://$host/?url="
+                val keys = if (final.contains(delim)) final.substringAfter(delim) else final
+
+                // primary: POST /api (mints a fresh direct link) — exact port
+                var direct: String? = null
+                runCatching {
+                    val api = app.post(
+                        "https://$host/api",
+                        headers = mapOf(
+                            "x-token" to host,
+                            "User-Agent" to userAgent,
+                            "Referer" to final,
+                        ),
+                        data = mapOf("keys" to keys),
+                    ).text
+                    val obj = org.json.JSONObject(api)
+                    direct = obj.optString("url").replace("\\/", "/").takeIf { it.startsWith("http") }
+                }
+                // fallback: decode the ?url= parameter of the redirect (also a
+                // working direct Google-Drive file, verified live)
+                if (direct == null) {
+                    direct = QUERY_URL_REGEX.find(final)?.groupValues?.get(1)
+                        ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
+                        ?.takeIf { it.startsWith("http") }
+                }
+                direct?.let { url ->
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = linkName("UHDMovies • Instant", sizeText?.let { "($it)" }, fileName.substringBeforeLast('.')),
+                            url = url,
+                            type = ExtractorLinkType.VIDEO,
+                        ) {
+                            this.quality = quality
+                        }
+                    )
+                }
+            }
+        }
+
+        // ---- Resume Cloud (a.btn-warning -> /zfile/KEY) ----
+        doc.selectFirst("a.btn-warning")?.attr("abs:href")?.takeIf { it.startsWith("http") }?.let { zhref ->
+            runCatching {
+                val zBody = app.get(zhref, headers = headers(driveseedBase)).text
+                val zDoc = Jsoup.parse(zBody)
+
+                var workerUrl: String? = null
+                // primary: POST action=cloud -> {url: /zfile/KEY?token=…} -> btn-success
+                ZFILE_KEY_REGEX.find(zBody)?.groupValues?.get(1)?.let { key ->
+                    runCatching {
+                        val post = app.post(
+                            zhref,
+                            headers = mapOf(
+                                "x-token" to URI_HOST.find(zhref)?.groupValues?.get(1).orEmpty(),
+                                "X-Requested-With" to "XMLHttpRequest",
+                                "User-Agent" to userAgent,
+                                "Referer" to zhref,
+                            ),
+                            data = mapOf("action" to "cloud", "key" to key, "action_token" to ""),
+                        ).text
+                        val tokenUrl = org.json.JSONObject(post).optString("url").replace("\\/", "/")
+                        if (tokenUrl.startsWith("http")) {
+                            val tBody = app.get(tokenUrl, headers = headers(driveseedBase)).text
+                            workerUrl = Jsoup.parse(tBody).selectFirst("a.btn-success")?.attr("abs:href")
+                                ?.takeIf { it.startsWith("http") }
+                        }
                     }
+                }
+                // fallback: the workers.dev direct link printed on the zfile page
+                if (workerUrl == null) {
+                    workerUrl = zDoc.selectFirst("a[href*=workers.dev]")?.attr("abs:href")?.takeIf { it.startsWith("http") }
+                }
+                workerUrl?.let { url ->
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = linkName("UHDMovies • Resume Cloud", sizeText?.let { "($it)" }, fileName.substringBeforeLast('.')),
+                            url = url,
+                            type = ExtractorLinkType.VIDEO,
+                        ) {
+                            this.quality = quality
+                        }
+                    )
+                }
             }
         }
     }
+
+    private val URI_HOST = Regex("""^(https?://[^/]+)""")
 }

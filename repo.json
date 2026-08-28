@@ -3,6 +3,6 @@
   "description": "UHDMovies (uhdmovies.autos) CloudStream extension — 4K dual audio movies & series",
   "manifestVersion": 1,
   "pluginLists": [
-    "https://raw.githubusercontent.com/kgicao29-ux/UHDMovies/builds/plugins.json"
+    "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/plugins.json"
   ]
 }

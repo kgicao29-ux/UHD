@@ -1,5 +1,5 @@
 // CloudStream UHDMovies provider
-version = 1
+version = 2
 
 cloudstream {
     description = "UHDMovies (uhdmovies.autos) — 4K/2160p/1080p dual-audio movies & series. Resolves the cloud.unblockedgames.wtf landing chain to Driveseed direct Google-Drive links."

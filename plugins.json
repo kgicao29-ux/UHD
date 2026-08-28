@@ -1,7 +1,7 @@
 [
     {
         "iconUrl": "https://uhdmovies.autos/wp-content/uploads/2021/03/uhdmovieslogonew.png",
-        "fileHash": "sha256-dcfebc84a944cd3a0153b1c4ebc4f1f4c3faa9d0492986730747674784fed6a4",
+        "fileHash": "sha256-36d5322209262854ac72ab07d03e7a2ffd09c69718e352622bbf2e757b45876e",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/kgicao29-ux/UHD",
         "fileSize": 41443,
@@ -14,7 +14,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 2,
+        "version": 3,
         "internalName": "UHDMovies",
         "description": "UHDMovies (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series. Resolves the cloud.unblockedgames.wtf landing chain to Driveseed direct Google-Drive links.",
         "url": "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/UHDMovies.cs3",

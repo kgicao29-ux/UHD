@@ -14,15 +14,21 @@ only as a sanity reference for the site's flow.
 - **Search** — native WP search (`/?s=…`).
 - **Detail** — poster, year, category tags; movies get every G-Drive button;
   series group buttons into `SxxEyy` episodes (quality strings kept as link labels).
-- **Links** — implements the site's full download chain natively, no WebView:
-  1. `cloud.unblockedgames.wtf/?sid=…` landing: `GET → POST _wp_http → POST _wp_http2`
-  2. page JS sets cookie `pepe-<hash>` → `GET /?go=pepe-<hash>` → meta-refresh
-  3. `driveseed.org/r?…` → `window.location.replace("/file/KEY")`
-  4. file page buttons:
-     - **Instant** (`a.btn-danger`) → `cdn.video-gen.xyz` → `video-seed.dev/?url=<GDrive>`
-       → the decoded `video-downloads.googleusercontent.com` **direct file** (verified
-       `Content-Type: video/mkv`, tens of GB, range-supported)
-     - **Resume Cloud** (`a.btn-warning` → `/zfile/KEY`) → `*.workers.dev` direct file
+- **Links** — full download chain ported 1:1 from phisher98's working
+  UHDmoviesProvider v38 (decompiled reference), each step re-verified live:
+  1. `cloud.unblockedgames.wtf/?sid=…` landing: `GET → POST all landing inputs →
+     POST second landing inputs` → script `?go=<token>` → `GET /?go=<token>` with
+     cookie `{token: _wp_http2}` → meta-refresh → `driveseed.org/r?…` →
+     `window.location.replace("/file/KEY")`
+  2. file page buttons:
+     - **Instant** (`a.btn-danger` → `cdn.video-gen.xyz` → `video-seed.dev/?url=…`):
+       POST `https://video-seed.xyz/api` `{keys: …}` + `x-token` header → `{url}` =
+       fresh **direct Google-Drive link** (exactly phisher's flow); if that API is
+       fingerprint-walled, falls back to the URL-decoded `?url=` GDrive direct file
+       (verified: `200 video/mkv`)
+     - **Resume Cloud** (`a.btn-warning` → `/zfile/KEY`): POST `action=cloud` (key
+       regex from page) → `{url: /zfile?token=…}` → `a.btn-success` / direct
+       `*.workers.dev` file (verified: `206 video/x-matroska`, range-supported)
 - Every link is a direct VIDEO link → playable and **downloadable** in CloudStream.
 
 ## Notes

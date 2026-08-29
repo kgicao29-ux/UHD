@@ -1,23 +1,23 @@
 [
     {
         "iconUrl": "https://uhdmovies.autos/wp-content/uploads/2021/03/uhdmovieslogonew.png",
-        "fileHash": "sha256-bb6755602510699bcad0221a983ac97c852122bf3bfa3c6ad2cc2efddae96cec",
+        "fileHash": "sha256-c61672a5b588621d090a625b1f48e0216f28cc3c322759b5f6e59ac0c957b20a",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/kgicao29-ux/UHD",
-        "fileSize": 51382,
+        "fileSize": 52055,
         "status": 1,
         "language": "en",
         "authors": [
-            "kgicao29-ux"
+            "phisher98"
         ],
         "tvTypes": [
             "Movie",
             "TvSeries"
         ],
-        "version": 4,
-        "internalName": "UHDMovies",
-        "description": "UHDMovies (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series. Dex-level rebrand of phisher98's UHDmoviesProvider v38: identical catalog, Simkl/TMDB metadata and on-device stream resolution (Driveseed Instant/Resume Cloud, Driveleech).",
+        "version": 38,
+        "internalName": "UHDmoviesProvider",
+        "description": "UHDmoviesProvider (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series with Simkl/TMDB metadata. Resolves Driveseed (Instant / Resume Cloud / ResumeBot) and Driveleech links on-device. Unmodified phisher98 v38 build.",
         "url": "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/UHDMovies.cs3",
-        "name": "UHDMovies"
+        "name": "UHDmoviesProvider"
     }
 ]

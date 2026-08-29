@@ -17,7 +17,7 @@
         "version": 38,
         "internalName": "UHDmoviesProvider",
         "description": "UHDmoviesProvider (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series with Simkl/TMDB metadata. Resolves Driveseed (Instant / Resume Cloud / ResumeBot) and Driveleech links on-device. Unmodified phisher98 v38 build.",
-        "url": "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/UHDMovies.cs3",
+        "url": "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/UHDmoviesProvider.cs3",
         "name": "UHDmoviesProvider"
     }
 ]

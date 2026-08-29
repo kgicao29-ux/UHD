@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://uhdmovies.autos/wp-content/uploads/2021/03/uhdmovieslogonew.png",
-        "fileHash": "sha256-36d5322209262854ac72ab07d03e7a2ffd09c69718e352622bbf2e757b45876e",
+        "fileHash": "sha256-bb6755602510699bcad0221a983ac97c852122bf3bfa3c6ad2cc2efddae96cec",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/kgicao29-ux/UHD",
-        "fileSize": 41443,
+        "fileSize": 51382,
         "status": 1,
         "language": "en",
         "authors": [
@@ -14,9 +14,9 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 3,
+        "version": 4,
         "internalName": "UHDMovies",
-        "description": "UHDMovies (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series. Resolves the cloud.unblockedgames.wtf landing chain to Driveseed direct Google-Drive links.",
+        "description": "UHDMovies (uhdmovies.autos) \u2014 4K/2160p/1080p dual-audio movies & series. Dex-level rebrand of phisher98's UHDmoviesProvider v38: identical catalog, Simkl/TMDB metadata and on-device stream resolution (Driveseed Instant/Resume Cloud, Driveleech).",
         "url": "https://raw.githubusercontent.com/kgicao29-ux/UHD/builds/UHDMovies.cs3",
         "name": "UHDMovies"
     }
